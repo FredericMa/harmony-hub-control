@@ -51,6 +51,7 @@ address and port; DNS aliases and cross-origin requests are rejected.
 | backups/restore | POST | Owner portable configuration restore |
 | integrations/mqtt | GET/POST | Owner integration settings and latest runtime status; no password in replies |
 | integrations/xmpp | GET/POST | Owner XMPP binding (`public` or `loopback`) and reboot-required status |
+| integrations/hbus | GET/POST | Owner HBus (port 8088) binding (`public` or `loopback`) and reboot-required status |
 | network/wifi, network/confirm | POST | Owner network trial/confirmation |
 | maintenance/reboot | POST | Owner normal reboot |
 | updates/begin, updates/chunk, updates/apply | POST | Owner signed release activation |
@@ -104,6 +105,11 @@ copy. `public` binds to `*` on all interfaces; `loopback` binds to `127.0.0.1`.
 Changed bindings require an explicit hub reboot before the running listener uses
 them. `rebootRequired` remains true until reboot, or until the setting is changed
 back to the binding captured before the pending change.
+
+The HBus endpoint works the same way for the stock HBus HTTP listener on port
+8088. `public` binds to `0.0.0.0`; `loopback` (the installer default) binds to
+`127.0.0.1`. The setting is stored in `hbus-listener.json`, and reinstalling
+keeps a saved `public` choice.
 
 ## Compatibility
 

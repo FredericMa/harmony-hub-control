@@ -31,8 +31,11 @@ binding is written atomically with a recoverable copy and takes effect after a
 hub reboot. Network-accessible does not configure router port forwarding or
 guarantee Internet reachability; it can expose the stock XMPP service to
 devices that can reach the hub. The installer defaults XMPP to network access.
-The original HBus listener remains restricted to loopback, while local HAL and
-engine access are preserved. This is not a claim that every stock service has
+The original HBus listener (port 8088) is restricted to loopback by default.
+The owner can make it network-accessible (`0.0.0.0`) in Settings; this lets any
+device that can reach the hub send stock HBus commands without pairing, so only
+enable it on a trusted network. It takes effect after a hub reboot, and the
+installer keeps the saved choice. Local HAL and engine access are preserved. This is not a claim that every stock service has
 been audited.
 
 ## Data And Recovery

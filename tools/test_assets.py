@@ -20,4 +20,6 @@ assert 'Network-accessible binds on all interfaces' in app
 assert 'Reboot the hub to apply it' in app and "api('integrations/xmpp'" in app
 assert "mode==='public'&&state.xmppMode!=='public'&&!confirm(" in app
 assert 'Network-accessible XMPP binds on all interfaces' in app
+assert "api('integrations/hbus'" in app and 'Network-accessible (0.0.0.0)' in app
+assert "mode==='public'&&state.hbusMode!=='public'&&!confirm(" in app
 print(f"Valid SVG XML; {len(references)} referenced icons present; unpaired layout has its own full-width column")

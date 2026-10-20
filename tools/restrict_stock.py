@@ -2,9 +2,12 @@
 import struct
 
 
-def configure_transport(data: bytes, name: str, public_xmpp: bool = True) -> bytes:
+def configure_transport(data: bytes, name: str, public_xmpp: bool = True, public_hbus: bool = False) -> bytes:
     bindings = {
-        "hbushttpserverconnector.lua": (b"127.0.0.1", (b"0.0.0.0", b"127.0.0.1")),
+        "hbushttpserverconnector.lua": (
+            b"0.0.0.0" if public_hbus else b"127.0.0.1",
+            (b"0.0.0.0", b"127.0.0.1"),
+        ),
         "xmppserverconnector.lua": (
             b"*" if public_xmpp else b"127.0.0.1",
             (b"*", b"127.0.0.1"),
