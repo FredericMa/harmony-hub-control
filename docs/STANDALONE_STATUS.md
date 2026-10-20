@@ -2,6 +2,13 @@
 
 This file records acceptance evidence, not a release claim.
 
+## HBus listener setting (2026-10-20)
+
+The owner can switch the stock HBus listener (port 8088) between loopback and
+network-accessible in Settings. The installer keeps a saved network-accessible
+choice and skips its closed-port check in that case; otherwise HBus stays
+restricted to loopback. Requires a rebuilt `codex_webui`.
+
 ## Listener binding policy (2026-10-20)
 
 The installer keeps the stock XMPP listener network-accessible, restoring its

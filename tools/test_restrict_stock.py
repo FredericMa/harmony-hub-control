@@ -29,6 +29,10 @@ stock_hbus = lua_chunk(b"0.0.0.0")
 restricted_hbus = configure_transport(stock_hbus, "hbushttpserverconnector.lua")
 assert b"127.0.0.1\0" in restricted_hbus
 assert configure_transport(restricted_hbus, "hbushttpserverconnector.lua") == restricted_hbus
+public_hbus = configure_transport(restricted_hbus, "hbushttpserverconnector.lua", public_hbus=True)
+assert b"0.0.0.0\0" in public_hbus and b"127.0.0.1\0" not in public_hbus
+assert configure_transport(public_hbus, "hbushttpserverconnector.lua", public_hbus=True) == public_hbus
+assert configure_transport(public_hbus, "hbushttpserverconnector.lua") == restricted_hbus
 
 stock_xmpp = lua_chunk(b"*")
 assert configure_transport(stock_xmpp, "xmppserverconnector.lua") == stock_xmpp
@@ -47,4 +51,4 @@ for invalid in (b"", HEADER + b"truncated", lua_chunk(b"192.0.2.1"),
     else:
         raise AssertionError("invalid listener bytecode was accepted")
 
-print("HBus remains loopback-only; XMPP supports public and loopback bindings")
+print("HBus and XMPP support public and loopback bindings")

@@ -155,6 +155,8 @@ def run():
         xmpp_file, xmpp_pending = base / "xmpp.lua", base / "xmpp.pending"
         xmpp_file.write_bytes(lua_chunk(b"*"))
         xmpp_mode = xmpp_file.stat().st_mode & 0o777
+        hbus_file, hbus_pending = base / "hbus.lua", base / "hbus.pending"
+        hbus_file.write_bytes(lua_chunk(b"127.0.0.1"))
         button_path = base / "input-events"
         os.mkfifo(button_path)
         button_fd = os.open(button_path, os.O_RDWR | os.O_NONBLOCK)
@@ -174,7 +176,8 @@ def run():
                 "LOCAL_UPDATE_STAGE": base / "update", "LOCAL_UPDATE_BACKUP": base / "rollback", "LOCAL_UPDATE_VOLUME": base,
                 "LOCAL_CORE_FILE": base / "localcore.lua", "LOCAL_MQTT_FILE": base / "codexmqtt.lua",
                 "LOCAL_INIT_FILE": base / "init.sh", "LOCAL_MAINTENANCE_FILE": base / "maintenance.sh",
-                "XMPP_LISTENER_FILE": xmpp_file, "XMPP_LISTENER_PENDING": xmpp_pending}
+                "XMPP_LISTENER_FILE": xmpp_file, "XMPP_LISTENER_PENDING": xmpp_pending,
+                "HBUS_LISTENER_FILE": hbus_file, "HBUS_LISTENER_PENDING": hbus_pending}
         source = ROOT / "payload/source"
         binary = base / "webui"
         subprocess.run([os.environ.get("CC", "gcc"), "-Os", "-DCJSON_NESTING_LIMIT=32", "-DLOCAL_TEST_NO_REBOOT=1"] +
@@ -221,6 +224,7 @@ def run():
             else: raise AssertionError("server failed to start")
             assert request("devices")[0] == 401
             assert request("integrations/xmpp")[0] == 401
+            assert request("integrations/hbus")[0] == 401
             assert request("session", extra={"Host": "attacker.example"})[0] == 403
             assert request("activities/state")[0] == 401
             assert request("session")[1]["buttonAvailable"]
@@ -275,6 +279,23 @@ def run():
             xmpp_file.write_bytes(lua_chunk(b"127.0.0.1"))
             (local / "xmpp-listener.json").unlink()
             assert request("integrations/xmpp", cookie=cookie)[1]["mode"] == "loopback"
+            status, hbus, _ = request("integrations/hbus", cookie=cookie)
+            assert status == 200 and hbus == {"mode": "loopback", "rebootRequired": False, "ok": True}
+            assert request("integrations/hbus", {"mode": "external"}, cookie, csrf)[0] == 400
+            status, hbus, _ = request("integrations/hbus", {"mode": "public"}, cookie, csrf)
+            assert status == 200 and hbus["mode"] == "public" and hbus["rebootRequired"]
+            assert (local / "hbushttpserverconnector.lua.previous").read_bytes() == lua_chunk(b"127.0.0.1")
+            assert hbus_file.read_bytes() == lua_chunk(b"0.0.0.0") and hbus_pending.exists()
+            assert json.loads((local / "hbus-listener.json").read_text()) == {"mode": "public"}
+            assert request("integrations/xmpp", cookie=cookie)[1]["mode"] == "loopback", "HBus must not change XMPP"
+            status, hbus, _ = request("integrations/hbus", {"mode": "loopback"}, cookie, csrf)
+            assert status == 200 and not hbus["rebootRequired"] and not hbus_pending.exists()
+            assert hbus_file.read_bytes() == lua_chunk(b"127.0.0.1")
+            hbus_file.write_bytes(lua_chunk(b"*"))
+            assert request("integrations/hbus", {"mode": "public"}, cookie, csrf)[0] == 503
+            hbus_file.write_bytes(lua_chunk(b"0.0.0.0"))
+            (local / "hbus-listener.json").unlink()
+            assert request("integrations/hbus", cookie=cookie)[1]["mode"] == "public"
             bearer = {"Authorization": "Bearer " + cookie.split("=", 1)[1], "Origin": f"http://127.0.0.1:{port}"}
             assert request("session", extra=bearer)[1]["role"] == "owner"
             assert request("activities/state", extra=bearer)[0] == 200
@@ -322,6 +343,8 @@ def run():
             assert request("backups/full", cookie=second)[0] == 403
             assert request("integrations/xmpp", cookie=second)[0] == 403
             assert request("integrations/xmpp", {"mode": "public"}, second, pending["csrf"])[0] == 403
+            assert request("integrations/hbus", cookie=second)[0] == 403
+            assert request("integrations/hbus", {"mode": "public"}, second, pending["csrf"])[0] == 403
             # Existing control-only browsers can gain ownership only after a fresh physical press.
             status, upgrade, upgrade_cookie = request("controllers/request", {"name": "Upgradeable"})
             assert request("controllers", {"id": upgrade["id"], "action": "approve"}, cookie, csrf)[0] == 200
@@ -433,7 +456,7 @@ def run():
             assert json.loads((resources / "DeviceList.json").read_text()) == fixtures["DeviceList"]
             assert not (journal / "pending").exists()
             check_resources(request, cookie, csrf, resources)
-            print("Local API: XMPP bindings, rollback backups, reboot status, authorization and malformed-bytecode rejection passed")
+            print("Local API: XMPP/HBus bindings, rollback backups, reboot status, authorization and malformed-bytecode rejection passed")
             print("Local API: pairing, approval/revocation, ownership, origin/CSRF, revisions, backups, cancellation, signature/framing validation and crash recovery passed")
         finally:
             for process in (coordinator, server):

@@ -80,7 +80,7 @@ These check IR responses, holds, release timeouts, LTCP framing, MQTT discovery
 and reloads, profile imports, browser button handling, pairing, configuration
 preservation, recovery, signed updates, listener bindings and recovery, and
 uploads without contacting a device. `test_local_api.py` also validates the
-owner-only XMPP listener setting endpoint, its Lua bytecode edits and reboot
+owner-only XMPP and HBus listener setting endpoints, its Lua bytecode edits and reboot
 status using disposable files.
 Run the C checks on the build host, not a hub.
 

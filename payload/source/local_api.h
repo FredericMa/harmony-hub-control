@@ -27,6 +27,14 @@
 #ifndef XMPP_LISTENER_PENDING
 #define XMPP_LISTENER_PENDING "/tmp/harmony-xmpp-listener.pending"
 #endif
+#ifndef HBUS_LISTENER_FILE
+#define HBUS_LISTENER_FILE "/opt/luaworks/tasks/connectserver/transport/hbushttpserverconnector.lua"
+#endif
+#define HBUS_LISTENER_CONFIG LOCAL_ROOT "/hbus-listener.json"
+#define HBUS_LISTENER_BACKUP LOCAL_ROOT "/hbushttpserverconnector.lua.previous"
+#ifndef HBUS_LISTENER_PENDING
+#define HBUS_LISTENER_PENDING "/tmp/harmony-hbus-listener.pending"
+#endif
 #ifndef LOCAL_BUTTON_DEVICE
 #define LOCAL_BUTTON_DEVICE "/dev/input/event0"
 #endif
@@ -829,7 +837,14 @@ done:
 
 #include "local_update.h"
 
-struct local_lua_chunk { const unsigned char *data; size_t length, pos, address_start, address_end; int addresses; };
+struct local_listener {
+    const char *name, *file, *config, *backup, *pending, *public_address, *default_mode;
+};
+static const struct local_listener local_xmpp = {"XMPP", XMPP_LISTENER_FILE, XMPP_LISTENER_CONFIG,
+    XMPP_LISTENER_BACKUP, XMPP_LISTENER_PENDING, "*", "public"};
+static const struct local_listener local_hbus = {"HBus", HBUS_LISTENER_FILE, HBUS_LISTENER_CONFIG,
+    HBUS_LISTENER_BACKUP, HBUS_LISTENER_PENDING, "0.0.0.0", "loopback"};
+struct local_lua_chunk { const unsigned char *data; const char *public_address; size_t length, pos, address_start, address_end; int addresses; };
 static int local_lua_u32(struct local_lua_chunk *chunk, uint32_t *value) {
     const unsigned char *p;
     if (chunk->length - chunk->pos < 4) return -1;
@@ -841,13 +856,15 @@ static int local_lua_skip(struct local_lua_chunk *chunk, size_t size) {
     if (size > chunk->length - chunk->pos) return -1;
     chunk->pos += size; return 0;
 }
+static int local_lua_address(const unsigned char *value, uint32_t size, const char *address) {
+    return size == strlen(address) + 1 && !memcmp(value, address, size);
+}
 static int local_lua_string(struct local_lua_chunk *chunk, int constant) {
     uint32_t size; size_t start = chunk->pos; const unsigned char *value;
     if (local_lua_u32(chunk, &size) || size > chunk->length - chunk->pos) return -1;
     value = chunk->data + chunk->pos;
     if (size && value[size - 1] != 0) return -1;
-    if (constant && ((size == 2 && value[0] == '*') ||
-                     (size == sizeof("127.0.0.1") && !memcmp(value, "127.0.0.1", sizeof("127.0.0.1") - 1)))) {
+    if (constant && (local_lua_address(value, size, chunk->public_address) || local_lua_address(value, size, "127.0.0.1"))) {
         chunk->addresses++;
         chunk->address_start = start;
         chunk->address_end = chunk->pos + size;
@@ -876,16 +893,18 @@ static int local_lua_function(struct local_lua_chunk *chunk, unsigned depth) {
     for (i = 0; i < count; i++) if (local_lua_string(chunk, 0)) return -1;
     return 0;
 }
-static int local_xmpp_transform(const unsigned char *data, size_t length, const char *mode,
+static int local_listener_transform(const struct local_listener *listener, const unsigned char *data, size_t length, const char *mode,
                                 unsigned char **result, size_t *result_length, const char **current_mode) {
     static const unsigned char header[12] = {0x1b,0x4c,0x75,0x61,0x51,0x00,0x01,0x04,0x04,0x04,0x08,0x04};
     struct local_lua_chunk chunk; const char *target; size_t old_size, new_size, target_len;
     unsigned char *out;
     if (length < sizeof(header) || memcmp(data, header, sizeof(header))) return -1;
     memset(&chunk, 0, sizeof(chunk)); chunk.data = data; chunk.length = length; chunk.pos = sizeof(header);
+    chunk.public_address = listener->public_address;
     if (local_lua_function(&chunk, 0) || chunk.pos != length || chunk.addresses != 1) return -1;
-    *current_mode = data[chunk.address_start + 4] == '*' ? "public" : "loopback";
-    target = !strcmp(mode, "public") ? "*" : "127.0.0.1";
+    *current_mode = local_lua_address(data + chunk.address_start + 4, (uint32_t)(chunk.address_end - chunk.address_start - 4),
+                                      listener->public_address) ? "public" : "loopback";
+    target = !strcmp(mode, "public") ? listener->public_address : "127.0.0.1";
     if (!strcmp(*current_mode, mode)) { *result = NULL; *result_length = length; return 0; }
     old_size = chunk.address_end - chunk.address_start;
     target_len = strlen(target) + 1;
@@ -899,17 +918,22 @@ static int local_xmpp_transform(const unsigned char *data, size_t length, const 
     memcpy(out + chunk.address_start + 4 + target_len, data + chunk.address_end, length - chunk.address_end);
     *result = out; *result_length = new_size; return 0;
 }
-static cJSON *local_xmpp_state(const char *mode, int pending) {
+static cJSON *local_listener_state(const char *mode, int pending) {
     cJSON *reply = cJSON_CreateObject();
     cJSON_AddStringToObject(reply, "mode", mode);
     cJSON_AddBoolToObject(reply, "rebootRequired", pending);
     cJSON_AddBoolToObject(reply, "ok", 1);
     return reply;
 }
-static int local_xmpp_restore(const char *raw, size_t length, mode_t permissions) {
-    return write_file_atomic(XMPP_LISTENER_FILE, raw, length) || chmod(XMPP_LISTENER_FILE, permissions) ? -1 : 0;
+static int local_listener_restore(const struct local_listener *listener, const char *raw, size_t length, mode_t permissions) {
+    return write_file_atomic(listener->file, raw, length) || chmod(listener->file, permissions) ? -1 : 0;
 }
-static void local_xmpp_listener(int fd, const struct request *r, const cJSON *body) {
+static void local_listener_error(int fd, const struct local_listener *listener, const char *status, const char *format) {
+    char message[160];
+    snprintf(message, sizeof(message), format, listener->name);
+    local_error(fd, status, message);
+}
+static void local_listener_setting(int fd, const struct request *r, const cJSON *body, const struct local_listener *listener) {
     char *raw = NULL, *stored = NULL, *previous = NULL, *text = NULL;
     size_t length = 0, stored_length = 0, previous_length = 0, result_length = 0;
     unsigned char *changed = NULL;
@@ -921,60 +945,60 @@ static void local_xmpp_listener(int fd, const struct request *r, const cJSON *bo
 
     lock = local_lock();
     if (lock < 0) { local_error(fd, "409 Conflict", "Another configuration change is in progress."); return; }
-    if (stat(XMPP_LISTENER_FILE, &listener_stat)) {
-        local_error(fd, "503 Service Unavailable", "The stock XMPP listener file could not be inspected."); goto done;
+    if (stat(listener->file, &listener_stat)) {
+        local_listener_error(fd, listener, "503 Service Unavailable", "The stock %s listener file could not be inspected."); goto done;
     }
-    raw = read_file_alloc(XMPP_LISTENER_FILE, 65536, &length);
-    if (!raw) { local_error(fd, "503 Service Unavailable", "The stock XMPP listener file could not be read."); goto done; }
-    pending = access(XMPP_LISTENER_PENDING, F_OK) == 0;
+    raw = read_file_alloc(listener->file, 65536, &length);
+    if (!raw) { local_listener_error(fd, listener, "503 Service Unavailable", "The stock %s listener file could not be read."); goto done; }
+    pending = access(listener->pending, F_OK) == 0;
     if (pending) {
-        previous = read_file_alloc(XMPP_LISTENER_BACKUP, 65536, &previous_length);
-        if (!previous || local_xmpp_transform((const unsigned char *)previous, previous_length, "public",
+        previous = read_file_alloc(listener->backup, 65536, &previous_length);
+        if (!previous || local_listener_transform(listener, (const unsigned char *)previous, previous_length, "public",
                                                &unused, &result_length, &previous_mode)) {
-            local_error(fd, "503 Service Unavailable", "The pending XMPP change has no valid recovery copy; use owner SSH recovery."); goto done;
+            local_listener_error(fd, listener, "503 Service Unavailable", "The pending %s change has no valid recovery copy; use owner SSH recovery."); goto done;
         }
         free(unused); unused = NULL;
     }
     if (!strcmp(r->method, "POST")) {
         mode = lj_str(body, "mode");
         if (strcmp(mode, "public") && strcmp(mode, "loopback")) {
-            local_error(fd, "400 Bad Request", "Choose public or loopback XMPP access."); goto done;
+            local_listener_error(fd, listener, "400 Bad Request", "Choose public or loopback %s access."); goto done;
         }
     }
-    config = lj_read(XMPP_LISTENER_CONFIG, 1024);
-    stored = read_file_alloc(XMPP_LISTENER_CONFIG, 1024, &stored_length);
-    if ((access(XMPP_LISTENER_CONFIG, F_OK) == 0 && !stored) ||
+    config = lj_read(listener->config, 1024);
+    stored = read_file_alloc(listener->config, 1024, &stored_length);
+    if ((access(listener->config, F_OK) == 0 && !stored) ||
         (stored && (!config || !cJSON_IsString(lj_get(config, "mode")) ||
         (strcmp(lj_str(config, "mode"), "public") && strcmp(lj_str(config, "mode"), "loopback"))))) {
-        local_error(fd, "503 Service Unavailable", "The saved XMPP setting is invalid; use owner SSH recovery."); goto done;
+        local_listener_error(fd, listener, "503 Service Unavailable", "The saved %s setting is invalid; use owner SSH recovery."); goto done;
     }
     if (!mode) mode = stored ? lj_str(config, "mode") : NULL;
-    if (!mode) mode = "public";
-    rc = local_xmpp_transform((const unsigned char *)raw, length, mode, &changed, &result_length, &actual);
+    if (!mode) mode = listener->default_mode;
+    rc = local_listener_transform(listener, (const unsigned char *)raw, length, mode, &changed, &result_length, &actual);
     if (!stored && !strcmp(r->method, "GET")) {
         mode = actual;
         free(changed); changed = NULL;
-        rc = local_xmpp_transform((const unsigned char *)raw, length, mode, &changed, &result_length, &actual);
+        rc = local_listener_transform(listener, (const unsigned char *)raw, length, mode, &changed, &result_length, &actual);
     }
-    if (rc == -1) { local_error(fd, "503 Service Unavailable", "The XMPP listener bytecode or binding is unsupported; no change was made."); goto done; }
-    if (rc == -2) { local_error(fd, "507 Insufficient Storage", "Not enough memory to update the XMPP listener."); goto done; }
+    if (rc == -1) { local_listener_error(fd, listener, "503 Service Unavailable", "The %s listener bytecode or binding is unsupported; no change was made."); goto done; }
+    if (rc == -2) { local_listener_error(fd, listener, "507 Insufficient Storage", "Not enough memory to update the %s listener."); goto done; }
 
     if (!strcmp(r->method, "POST")) {
         if (changed) {
-            if (!pending && write_file_atomic(XMPP_LISTENER_BACKUP, raw, length)) {
-                local_error(fd, "507 Insufficient Storage", "A recoverable XMPP listener backup could not be written."); goto done;
+            if (!pending && write_file_atomic(listener->backup, raw, length)) {
+                local_listener_error(fd, listener, "507 Insufficient Storage", "A recoverable %s listener backup could not be written."); goto done;
             }
-            if (!pending && write_file_atomic(XMPP_LISTENER_PENDING, "1", 1)) {
-                local_error(fd, "507 Insufficient Storage", "XMPP reboot status could not be recorded."); goto done;
+            if (!pending && write_file_atomic(listener->pending, "1", 1)) {
+                local_listener_error(fd, listener, "507 Insufficient Storage", "%s reboot status could not be recorded."); goto done;
             }
             if (!pending) marker_created = 1;
-            if (write_file_atomic(XMPP_LISTENER_FILE, (const char *)changed, result_length) ||
-                chmod(XMPP_LISTENER_FILE, listener_stat.st_mode & 0777)) {
-                int restored = local_xmpp_restore(raw, length, listener_stat.st_mode & 0777) == 0;
-                if (marker_created) unlink(XMPP_LISTENER_PENDING);
-                local_error(fd, restored ? "507 Insufficient Storage" : "503 Service Unavailable",
-                            restored ? "The XMPP listener could not be updated; the original file was restored." :
-                                       "The XMPP listener update and automatic restoration failed; use owner SSH recovery.");
+            if (write_file_atomic(listener->file, (const char *)changed, result_length) ||
+                chmod(listener->file, listener_stat.st_mode & 0777)) {
+                int restored = local_listener_restore(listener, raw, length, listener_stat.st_mode & 0777) == 0;
+                if (marker_created) unlink(listener->pending);
+                local_listener_error(fd, listener, restored ? "507 Insufficient Storage" : "503 Service Unavailable",
+                            restored ? "The %s listener could not be updated; the original file was restored." :
+                                       "The %s listener update and automatic restoration failed; use owner SSH recovery.");
                 goto done;
             }
             changed_file = 1;
@@ -982,23 +1006,23 @@ static void local_xmpp_listener(int fd, const struct request *r, const cJSON *bo
         cJSON_Delete(config); config = cJSON_CreateObject();
         cJSON_AddStringToObject(config, "mode", mode);
         text = cJSON_PrintUnformatted(config);
-        if (!text || write_file_atomic(XMPP_LISTENER_CONFIG, text, strlen(text))) {
-            int restored = !changed_file || !local_xmpp_restore(raw, length, listener_stat.st_mode & 0777);
-            if (marker_created) unlink(XMPP_LISTENER_PENDING);
-            local_error(fd, restored ? "507 Insufficient Storage" : "503 Service Unavailable",
-                        restored ? "The XMPP setting could not be saved; the previous listener binding was restored." :
-                                   "The XMPP setting could not be saved and automatic restoration failed; use owner SSH recovery.");
+        if (!text || write_file_atomic(listener->config, text, strlen(text))) {
+            int restored = !changed_file || !local_listener_restore(listener, raw, length, listener_stat.st_mode & 0777);
+            if (marker_created) unlink(listener->pending);
+            local_listener_error(fd, listener, restored ? "507 Insufficient Storage" : "503 Service Unavailable",
+                        restored ? "The %s setting could not be saved; the previous listener binding was restored." :
+                                   "The %s setting could not be saved and automatic restoration failed; use owner SSH recovery.");
             goto done;
         }
         if (pending) {
             if (!strcmp(mode, previous_mode)) {
-                if (unlink(XMPP_LISTENER_PENDING) == 0 || access(XMPP_LISTENER_PENDING, F_OK) != 0) pending = 0;
+                if (unlink(listener->pending) == 0 || access(listener->pending, F_OK) != 0) pending = 0;
             }
         } else if (marker_created) pending = 1;
-        if (changed && !pending) unlink(XMPP_LISTENER_PENDING);
+        if (changed && !pending) unlink(listener->pending);
     }
     if (strcmp(r->method, "POST") && changed) pending = 1;
-    reply = local_xmpp_state(mode, pending);
+    reply = local_listener_state(mode, pending);
     lj_reply(fd, "200 OK", reply);
 done:
     free(raw); free(stored); free(previous); free(text); free(changed); free(unused);
@@ -1133,7 +1157,8 @@ static int local_dispatch(int fd, const struct request *r) {
     } else if (!strcmp(r->path, "/api/v1/activities/native") && get) send_file_download(fd, ACTIVITY_LIST, "native-activities.json", "application/json");
     else if (!strncmp(r->path, "/api/v1/updates/", 16) && !get) local_updates(fd, r, body);
     else if (!strcmp(r->path, "/api/v1/integrations/mqtt")) local_mqtt(fd, r, body);
-    else if (!strcmp(r->path, "/api/v1/integrations/xmpp")) local_xmpp_listener(fd, r, body);
+    else if (!strcmp(r->path, "/api/v1/integrations/xmpp")) local_listener_setting(fd, r, body, &local_xmpp);
+    else if (!strcmp(r->path, "/api/v1/integrations/hbus")) local_listener_setting(fd, r, body, &local_hbus);
     else if ((!strcmp(r->path, "/api/v1/network/wifi") || !strcmp(r->path, "/api/v1/network/confirm")) && !get) local_wifi(fd, r, body);
     else if (!strcmp(r->path, "/api/v1/maintenance/reboot") && !get) {
         out = lj_parse("{\"ok\":true}"); lj_reply(fd, "200 OK", out); cJSON_Delete(out);
