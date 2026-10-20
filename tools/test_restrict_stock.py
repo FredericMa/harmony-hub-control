@@ -38,4 +38,12 @@ public_xmpp = configure_transport(restricted_xmpp, "xmppserverconnector.lua")
 assert b"*\0" in public_xmpp
 assert configure_transport(public_xmpp, "xmppserverconnector.lua") == public_xmpp
 
+for invalid in (b"", HEADER + b"truncated", lua_chunk(b"192.0.2.1"), stock_xmpp + b"trailing"):
+    try:
+        configure_transport(invalid, "xmppserverconnector.lua")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid listener bytecode was accepted")
+
 print("HBus remains loopback-only; XMPP supports public and loopback bindings")

@@ -16,6 +16,8 @@ def configure_transport(data: bytes, name: str, public_xmpp: bool = True) -> byt
 
     def count():
         nonlocal pos
+        if pos + 4 > len(data):
+            raise ValueError("Truncated bytecode")
         value = struct.unpack_from("<I", data, pos)[0]
         pos += 4
         if value > 1_000_000:
@@ -45,6 +47,8 @@ def configure_transport(data: bytes, name: str, public_xmpp: bool = True) -> byt
         skip(12)  # lines, upvalues, parameters, vararg, stack size
         skip(count() * 4)
         for _ in range(count()):
+            if pos >= len(data):
+                raise ValueError("Truncated bytecode")
             kind = data[pos]
             skip(1)
             if kind == 1:
