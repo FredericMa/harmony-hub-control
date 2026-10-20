@@ -1,15 +1,23 @@
-"""Restrict the stock Lua 5.1 listeners without changing their engine logic."""
+"""Configure stock Lua 5.1 listener bindings without changing engine logic."""
 import struct
 
 
-def loopback_transport(data: bytes, name: str) -> bytes:
-    targets = {"hbushttpserverconnector.lua": b"0.0.0.0", "xmppserverconnector.lua": b"*"}
-    if name not in targets or data[:12] != bytes.fromhex("1b4c75615100010404040804"):
+def configure_transport(data: bytes, name: str, public_xmpp: bool = True) -> bytes:
+    bindings = {
+        "hbushttpserverconnector.lua": (b"127.0.0.1", (b"0.0.0.0", b"127.0.0.1")),
+        "xmppserverconnector.lua": (
+            b"*" if public_xmpp else b"127.0.0.1",
+            (b"*", b"127.0.0.1"),
+        ),
+    }
+    if name not in bindings or data[:12] != bytes.fromhex("1b4c75615100010404040804"):
         raise ValueError("Unsupported transport or Lua bytecode; no changes made")
     pos, strings = 12, []
 
     def count():
         nonlocal pos
+        if pos + 4 > len(data):
+            raise ValueError("Truncated bytecode")
         value = struct.unpack_from("<I", data, pos)[0]
         pos += 4
         if value > 1_000_000:
@@ -39,6 +47,8 @@ def loopback_transport(data: bytes, name: str) -> bytes:
         skip(12)  # lines, upvalues, parameters, vararg, stack size
         skip(count() * 4)
         for _ in range(count()):
+            if pos >= len(data):
+                raise ValueError("Truncated bytecode")
             kind = data[pos]
             skip(1)
             if kind == 1:
@@ -61,11 +71,12 @@ def loopback_transport(data: bytes, name: str) -> bytes:
     function()
     if pos != len(data):
         raise ValueError("Unexpected trailing bytecode")
-    matches = [(start, end) for start, end, value in strings if value == targets[name]]
-    if not matches and any(value == b"127.0.0.1" for _, _, value in strings):
-        return data
+    target, valid_bindings = bindings[name]
+    matches = [(start, end, value) for start, end, value in strings if value in valid_bindings]
     if len(matches) != 1:
         raise ValueError("Expected exactly one listener address; no changes made")
-    start, end = matches[0]
-    value = b"127.0.0.1\0"
+    start, end, current = matches[0]
+    if current == target:
+        return data
+    value = target + b"\0"
     return data[:start] + struct.pack("<I", len(value)) + value + data[end:]

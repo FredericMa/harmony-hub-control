@@ -14,6 +14,15 @@ import fcntl
 
 ROOT = Path(__file__).resolve().parents[1]
 
+def lua_chunk(address, *other_addresses):
+    header = bytes.fromhex("1b4c75615100010404040804")
+    def lua_string(value):
+        return len(value).to_bytes(4, "little") + value
+    addresses = (address,) + other_addresses
+    constants = len(addresses).to_bytes(4, "little") + b"".join(
+        b"\x04" + lua_string(value + b"\0") for value in addresses)
+    return header + lua_string(b"") + bytes(12) + bytes(4) + constants + bytes(16)
+
 def check_resources(request, cookie, csrf, resources):
     devices_path = resources / "DeviceList.json"
     protocols_path = resources / "ProtocolList.json"
@@ -143,6 +152,9 @@ def run():
         local, ops, resources, www = [base / n for n in ("local", "operations", "resources", "www")]
         for path in (local, ops, resources, www):
             path.mkdir()
+        xmpp_file, xmpp_pending = base / "xmpp.lua", base / "xmpp.pending"
+        xmpp_file.write_bytes(lua_chunk(b"*"))
+        xmpp_mode = xmpp_file.stat().st_mode & 0o777
         button_path = base / "input-events"
         os.mkfifo(button_path)
         button_fd = os.open(button_path, os.O_RDWR | os.O_NONBLOCK)
@@ -161,7 +173,8 @@ def run():
                 "IR_SEND_LOCK": base / "ir.lock",
                 "LOCAL_UPDATE_STAGE": base / "update", "LOCAL_UPDATE_BACKUP": base / "rollback", "LOCAL_UPDATE_VOLUME": base,
                 "LOCAL_CORE_FILE": base / "localcore.lua", "LOCAL_MQTT_FILE": base / "codexmqtt.lua",
-                "LOCAL_INIT_FILE": base / "init.sh", "LOCAL_MAINTENANCE_FILE": base / "maintenance.sh"}
+                "LOCAL_INIT_FILE": base / "init.sh", "LOCAL_MAINTENANCE_FILE": base / "maintenance.sh",
+                "XMPP_LISTENER_FILE": xmpp_file, "XMPP_LISTENER_PENDING": xmpp_pending}
         source = ROOT / "payload/source"
         binary = base / "webui"
         subprocess.run([os.environ.get("CC", "gcc"), "-Os", "-DCJSON_NESTING_LIMIT=32", "-DLOCAL_TEST_NO_REBOOT=1"] +
@@ -207,6 +220,7 @@ def run():
                 except OSError: time.sleep(.05)
             else: raise AssertionError("server failed to start")
             assert request("devices")[0] == 401
+            assert request("integrations/xmpp")[0] == 401
             assert request("session", extra={"Host": "attacker.example"})[0] == 403
             assert request("activities/state")[0] == 401
             assert request("session")[1]["buttonAvailable"]
@@ -222,6 +236,45 @@ def run():
             status, owner, cookie = request("controllers/claim", {"name": "Owner", "code": code})
             assert status == 200 and owner["role"] == "owner"
             csrf = owner["csrf"]
+            status, xmpp, _ = request("integrations/xmpp", cookie=cookie)
+            assert status == 200 and xmpp == {"mode": "public", "rebootRequired": False, "ok": True}
+            assert request("integrations/xmpp", {"mode": "external"}, cookie, csrf)[0] == 400
+            status, xmpp, _ = request("integrations/xmpp", {"mode": "public"}, cookie, csrf)
+            assert status == 200 and not xmpp["rebootRequired"]
+            assert not (local / "xmppserverconnector.lua.previous").exists()
+            status, xmpp, _ = request("integrations/xmpp", {"mode": "loopback"}, cookie, csrf)
+            assert status == 200 and xmpp["mode"] == "loopback" and xmpp["rebootRequired"]
+            backup_file = local / "xmppserverconnector.lua.previous"
+            assert backup_file.read_bytes() == lua_chunk(b"*")
+            assert b"127.0.0.1\0" in xmpp_file.read_bytes() and xmpp_pending.exists()
+            assert xmpp_file.stat().st_mode & 0o777 == xmpp_mode
+            backup_file.rename(local / "xmpp-backup.saved")
+            assert request("integrations/xmpp", cookie=cookie)[0] == 503
+            (local / "xmpp-backup.saved").rename(backup_file)
+            xmpp_pending.unlink()
+            status, xmpp, _ = request("integrations/xmpp", cookie=cookie)
+            assert status == 200 and xmpp["mode"] == "loopback" and not xmpp["rebootRequired"]
+            status, xmpp, _ = request("integrations/xmpp", {"mode": "public"}, cookie, csrf)
+            assert status == 200 and xmpp["mode"] == "public" and xmpp["rebootRequired"]
+            status, xmpp, _ = request("integrations/xmpp", {"mode": "public"}, cookie, csrf)
+            assert status == 200 and xmpp["rebootRequired"]
+            status, xmpp, _ = request("integrations/xmpp", {"mode": "loopback"}, cookie, csrf)
+            assert status == 200 and not xmpp["rebootRequired"]
+            backup_file.unlink()
+            backup_file.mkdir()
+            before = xmpp_file.read_bytes()
+            assert request("integrations/xmpp", {"mode": "public"}, cookie, csrf)[0] == 507
+            assert xmpp_file.read_bytes() == before and not xmpp_pending.exists()
+            backup_file.rmdir()
+            xmpp_file.write_bytes(b"not lua bytecode")
+            assert request("integrations/xmpp", cookie=cookie)[0] == 503
+            xmpp_file.write_bytes(lua_chunk(b"192.0.2.1"))
+            assert request("integrations/xmpp", {"mode": "public"}, cookie, csrf)[0] == 503
+            xmpp_file.write_bytes(lua_chunk(b"*", b"127.0.0.1"))
+            assert request("integrations/xmpp", cookie=cookie)[0] == 503
+            xmpp_file.write_bytes(lua_chunk(b"127.0.0.1"))
+            (local / "xmpp-listener.json").unlink()
+            assert request("integrations/xmpp", cookie=cookie)[1]["mode"] == "loopback"
             bearer = {"Authorization": "Bearer " + cookie.split("=", 1)[1], "Origin": f"http://127.0.0.1:{port}"}
             assert request("session", extra=bearer)[1]["role"] == "owner"
             assert request("activities/state", extra=bearer)[0] == 200
@@ -267,6 +320,8 @@ def run():
             assert request("controllers", {"id": pending["id"], "action": "approve"}, cookie, csrf)[0] == 200
             assert request("devices", cookie=second)[0] == 200
             assert request("backups/full", cookie=second)[0] == 403
+            assert request("integrations/xmpp", cookie=second)[0] == 403
+            assert request("integrations/xmpp", {"mode": "public"}, second, pending["csrf"])[0] == 403
             # Existing control-only browsers can gain ownership only after a fresh physical press.
             status, upgrade, upgrade_cookie = request("controllers/request", {"name": "Upgradeable"})
             assert request("controllers", {"id": upgrade["id"], "action": "approve"}, cookie, csrf)[0] == 200
@@ -378,6 +433,7 @@ def run():
             assert json.loads((resources / "DeviceList.json").read_text()) == fixtures["DeviceList"]
             assert not (journal / "pending").exists()
             check_resources(request, cookie, csrf, resources)
+            print("Local API: XMPP bindings, rollback backups, reboot status, authorization and malformed-bytecode rejection passed")
             print("Local API: pairing, approval/revocation, ownership, origin/CSRF, revisions, backups, cancellation, signature/framing validation and crash recovery passed")
         finally:
             for process in (coordinator, server):

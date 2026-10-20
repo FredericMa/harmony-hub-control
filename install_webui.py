@@ -300,7 +300,7 @@ class Installer:
         return path
 
     def run(self) -> None:
-        from tools.restrict_stock import loopback_transport
+        from tools.restrict_stock import configure_transport
         step("Checking the supported hub")
         firmware = self.run_remote("cat /etc/version", timeout=30).strip()
         if "4.15.600" not in firmware or self.run_remote("uname -m", timeout=30).strip() != "mips":
@@ -327,7 +327,7 @@ class Installer:
         transports = {}
         for name in ("hbushttpserverconnector.lua", "xmppserverconnector.lua"):
             remote = "/opt/luaworks/tasks/connectserver/transport/" + name
-            transports[remote] = loopback_transport(self.read_remote_bytes(remote), name)
+            transports[remote] = configure_transport(self.read_remote_bytes(remote), name)
         files = {}
         for name in ("dropbearmulti", "codex_dhcpd", "codex_hbus", "codex_hal_ltcp", "codex_bthid_keyboard", "codex_portal", "codex_webui"):
             files["/data/codex/bin/" + name] = ((PAYLOAD / "bin" / name).read_bytes(), "755")
@@ -388,7 +388,7 @@ class Installer:
             raise
 
         if self.args.no_apply_cloud_restart:
-            info("Installation staged. Reboot is required to apply the listener restrictions and local service.")
+            info("Installation staged. Reboot is required to apply the HBus restriction, XMPP binding, and local service.")
         else:
             step("Restarting the hub")
             self.run_remote("(sleep 2; /sbin/reboot) >/dev/null 2>&1 & echo restarting", quiet=True)
@@ -404,8 +404,8 @@ class Installer:
                     if time.monotonic() >= deadline:
                         raise RuntimeError("The local service did not become healthy; owner SSH and the verified backup remain available")
                     time.sleep(2)
-            if tcp_open(self.args.hub_host, 5222) or tcp_open(self.args.hub_host, 8088):
-                raise RuntimeError("An old LAN listener is still exposed; recover using the off-device backup")
+            if tcp_open(self.args.hub_host, 8088):
+                raise RuntimeError("The old HBus listener is still exposed; recover using the off-device backup")
         step("Installed")
         info(f"Local UI: http://{self.args.hub_host}:8080/")
         if claim_code:

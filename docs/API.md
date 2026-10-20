@@ -50,6 +50,7 @@ address and port; DNS aliases and cross-origin requests are rejected.
 | backups/portable, backups/full | GET | Owner exports |
 | backups/restore | POST | Owner portable configuration restore |
 | integrations/mqtt | GET/POST | Owner integration settings and latest runtime status; no password in replies |
+| integrations/xmpp | GET/POST | Owner XMPP binding (`public` or `loopback`) and reboot-required status |
 | network/wifi, network/confirm | POST | Owner network trial/confirmation |
 | maintenance/reboot | POST | Owner normal reboot |
 | updates/begin, updates/chunk, updates/apply | POST | Owner signed release activation |
@@ -96,6 +97,13 @@ desktop recovery. Full installer ZIP backups use `restore_backup.py`.
 Wi-Fi changes retain the previous configuration for 90 seconds. Confirmation
 requires the requested network to be connected; otherwise the old network is
 restored. A reboot with an unconfirmed trial also restores it.
+
+The XMPP endpoint stores the desired listener binding separately from local
+configuration and atomically updates the stock Lua bytecode with a recoverable
+copy. `public` binds to `*` on all interfaces; `loopback` binds to `127.0.0.1`.
+Changed bindings require an explicit hub reboot before the running listener uses
+them. `rebootRequired` remains true until reboot, or until the setting is changed
+back to the binding captured before the pending change.
 
 ## Compatibility
 

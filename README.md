@@ -92,9 +92,9 @@ internet-blocked tests and a 24-hour offline soak remain release gates.
 See [Acceptance status](docs/STANDALONE_STATUS.md) for the evidence.
 
 The UI uses trusted-LAN **HTTP**, not HTTPS. Pairing does not encrypt traffic.
-Do not expose it to the internet. Owner SSH is key-only; stock XMPP and HBus
-listeners are restricted to loopback. See [Security](docs/SECURITY.md) and
-[API](docs/API.md).
+Do not expose it to the internet. Owner SSH is key-only; XMPP access is
+configurable in Settings, while HBus is restricted to loopback. See
+[Security](docs/SECURITY.md) and [API](docs/API.md).
 
 ## Development
 

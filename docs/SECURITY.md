@@ -25,9 +25,15 @@ and logs are bounded. Stored pairing tokens are hashed.
 
 MQTT and the Lua core use a root-only local integration key and the same
 command coordinator. Keep SSH keys private. Dropbear disallows password login.
-The installer restricts the original XMPP and HBus listeners to loopback,
-while preserving local HAL and engine access. This is not a claim that every
-stock service has been audited.
+The stock XMPP listener can be set by the owner to network-accessible
+(`*`, all interfaces) or loopback-only (`127.0.0.1`) in Settings. A changed
+binding is written atomically with a recoverable copy and takes effect after a
+hub reboot. Network-accessible does not configure router port forwarding or
+guarantee Internet reachability; it can expose the stock XMPP service to
+devices that can reach the hub. The installer defaults XMPP to network access.
+The original HBus listener remains restricted to loopback, while local HAL and
+engine access are preserved. This is not a claim that every stock service has
+been audited.
 
 ## Data And Recovery
 

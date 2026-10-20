@@ -15,4 +15,9 @@ controls = app[app.index("const controls ="):app.index("function activeDevice")]
 references.update("icon-" + name for name in re.findall(r"\['[^']+','[^']+','([^']+)',\[", controls))
 assert references <= symbols, references - symbols
 assert '.shell:has(#navigation[hidden]){grid-template-columns:minmax(0,1fr)' in (root / "app.css").read_text()
+assert 'Network-accessible (*)' in app and 'Loopback only (127.0.0.1)' in app
+assert 'Network-accessible binds on all interfaces' in app
+assert 'Reboot the hub to apply it' in app and "api('integrations/xmpp'" in app
+assert "mode==='public'&&state.xmppMode!=='public'&&!confirm(" in app
+assert 'Network-accessible XMPP binds on all interfaces' in app
 print(f"Valid SVG XML; {len(references)} referenced icons present; unpaired layout has its own full-width column")
