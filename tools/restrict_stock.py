@@ -1,10 +1,13 @@
-"""Restrict the stock Lua 5.1 listeners without changing their engine logic."""
+"""Configure stock Lua 5.1 listener bindings without changing engine logic."""
 import struct
 
 
-def loopback_transport(data: bytes, name: str) -> bytes:
-    targets = {"hbushttpserverconnector.lua": b"0.0.0.0", "xmppserverconnector.lua": b"*"}
-    if name not in targets or data[:12] != bytes.fromhex("1b4c75615100010404040804"):
+def configure_transport(data: bytes, name: str) -> bytes:
+    bindings = {
+        "hbushttpserverconnector.lua": (b"0.0.0.0", b"127.0.0.1"),
+        "xmppserverconnector.lua": (b"127.0.0.1", b"*"),
+    }
+    if name not in bindings or data[:12] != bytes.fromhex("1b4c75615100010404040804"):
         raise ValueError("Unsupported transport or Lua bytecode; no changes made")
     pos, strings = 12, []
 
@@ -61,11 +64,13 @@ def loopback_transport(data: bytes, name: str) -> bytes:
     function()
     if pos != len(data):
         raise ValueError("Unexpected trailing bytecode")
-    matches = [(start, end) for start, end, value in strings if value == targets[name]]
-    if not matches and any(value == b"127.0.0.1" for _, _, value in strings):
+    source, destination = bindings[name]
+    sources = [(start, end) for start, end, value in strings if value == source]
+    destinations = [(start, end) for start, end, value in strings if value == destination]
+    if not sources and len(destinations) == 1:
         return data
-    if len(matches) != 1:
+    if len(sources) != 1 or destinations:
         raise ValueError("Expected exactly one listener address; no changes made")
-    start, end = matches[0]
-    value = b"127.0.0.1\0"
+    start, end = sources[0]
+    value = destination + b"\0"
     return data[:start] + struct.pack("<I", len(value)) + value + data[end:]

@@ -25,9 +25,10 @@ and logs are bounded. Stored pairing tokens are hashed.
 
 MQTT and the Lua core use a root-only local integration key and the same
 command coordinator. Keep SSH keys private. Dropbear disallows password login.
-The installer restricts the original XMPP and HBus listeners to loopback,
-while preserving local HAL and engine access. This is not a claim that every
-stock service has been audited.
+The installer leaves the stock XMPP listener available on the network and
+restricts only the original HBus listener to loopback, while preserving local
+HAL and engine access. This is not a claim that every stock service has been
+audited.
 
 ## Data And Recovery
 
