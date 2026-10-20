@@ -9,18 +9,18 @@ from tools.restrict_stock import configure_transport
 HEADER = bytes.fromhex("1b4c75615100010404040804")
 
 
-def lua_chunk(address: bytes) -> bytes:
+def lua_chunk(address: bytes, *other_addresses: bytes) -> bytes:
     def lua_string(value: bytes) -> bytes:
         return len(value).to_bytes(4, "little") + value
 
+    constants = (address,) + other_addresses
     return (
         HEADER
         + lua_string(b"")
         + bytes(12)
         + bytes(4)
-        + (1).to_bytes(4, "little")
-        + b"\x04"
-        + lua_string(address + b"\0")
+        + len(constants).to_bytes(4, "little")
+        + b"".join(b"\x04" + lua_string(value + b"\0") for value in constants)
         + bytes(16)
     )
 
@@ -38,7 +38,8 @@ public_xmpp = configure_transport(restricted_xmpp, "xmppserverconnector.lua")
 assert b"*\0" in public_xmpp
 assert configure_transport(public_xmpp, "xmppserverconnector.lua") == public_xmpp
 
-for invalid in (b"", HEADER + b"truncated", lua_chunk(b"192.0.2.1"), stock_xmpp + b"trailing"):
+for invalid in (b"", HEADER + b"truncated", lua_chunk(b"192.0.2.1"),
+                lua_chunk(b"*", b"127.0.0.1"), stock_xmpp + b"trailing"):
     try:
         configure_transport(invalid, "xmppserverconnector.lua")
     except ValueError:

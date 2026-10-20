@@ -906,6 +906,9 @@ static cJSON *local_xmpp_state(const char *mode, int pending) {
     cJSON_AddBoolToObject(reply, "ok", 1);
     return reply;
 }
+static int local_xmpp_restore(const char *raw, size_t length, mode_t permissions) {
+    return write_file_atomic(XMPP_LISTENER_FILE, raw, length) || chmod(XMPP_LISTENER_FILE, permissions) ? -1 : 0;
+}
 static void local_xmpp_listener(int fd, const struct request *r, const cJSON *body) {
     char *raw = NULL, *stored = NULL, *previous = NULL, *text = NULL;
     size_t length = 0, stored_length = 0, previous_length = 0, result_length = 0;
@@ -913,10 +916,14 @@ static void local_xmpp_listener(int fd, const struct request *r, const cJSON *bo
     unsigned char *unused = NULL;
     const char *actual = NULL, *mode = NULL, *previous_mode = NULL;
     cJSON *config = NULL, *reply = NULL;
+    struct stat listener_stat;
     int lock = -1, pending, rc, changed_file = 0, marker_created = 0;
 
     lock = local_lock();
     if (lock < 0) { local_error(fd, "409 Conflict", "Another configuration change is in progress."); return; }
+    if (stat(XMPP_LISTENER_FILE, &listener_stat)) {
+        local_error(fd, "503 Service Unavailable", "The stock XMPP listener file could not be inspected."); goto done;
+    }
     raw = read_file_alloc(XMPP_LISTENER_FILE, 65536, &length);
     if (!raw) { local_error(fd, "503 Service Unavailable", "The stock XMPP listener file could not be read."); goto done; }
     pending = access(XMPP_LISTENER_PENDING, F_OK) == 0;
@@ -961,9 +968,14 @@ static void local_xmpp_listener(int fd, const struct request *r, const cJSON *bo
                 local_error(fd, "507 Insufficient Storage", "XMPP reboot status could not be recorded."); goto done;
             }
             if (!pending) marker_created = 1;
-            if (write_file_atomic(XMPP_LISTENER_FILE, (const char *)changed, result_length)) {
+            if (write_file_atomic(XMPP_LISTENER_FILE, (const char *)changed, result_length) ||
+                chmod(XMPP_LISTENER_FILE, listener_stat.st_mode & 0777)) {
+                int restored = local_xmpp_restore(raw, length, listener_stat.st_mode & 0777) == 0;
                 if (marker_created) unlink(XMPP_LISTENER_PENDING);
-                local_error(fd, "507 Insufficient Storage", "The XMPP listener could not be updated; the original file is unchanged."); goto done;
+                local_error(fd, restored ? "507 Insufficient Storage" : "503 Service Unavailable",
+                            restored ? "The XMPP listener could not be updated; the original file was restored." :
+                                       "The XMPP listener update and automatic restoration failed; use owner SSH recovery.");
+                goto done;
             }
             changed_file = 1;
         }
@@ -971,7 +983,7 @@ static void local_xmpp_listener(int fd, const struct request *r, const cJSON *bo
         cJSON_AddStringToObject(config, "mode", mode);
         text = cJSON_PrintUnformatted(config);
         if (!text || write_file_atomic(XMPP_LISTENER_CONFIG, text, strlen(text))) {
-            int restored = !changed_file || !write_file_atomic(XMPP_LISTENER_FILE, raw, length);
+            int restored = !changed_file || !local_xmpp_restore(raw, length, listener_stat.st_mode & 0777);
             if (marker_created) unlink(XMPP_LISTENER_PENDING);
             local_error(fd, restored ? "507 Insufficient Storage" : "503 Service Unavailable",
                         restored ? "The XMPP setting could not be saved; the previous listener binding was restored." :

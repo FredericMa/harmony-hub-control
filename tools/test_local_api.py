@@ -154,6 +154,7 @@ def run():
             path.mkdir()
         xmpp_file, xmpp_pending = base / "xmpp.lua", base / "xmpp.pending"
         xmpp_file.write_bytes(lua_chunk(b"*"))
+        xmpp_mode = xmpp_file.stat().st_mode & 0o777
         button_path = base / "input-events"
         os.mkfifo(button_path)
         button_fd = os.open(button_path, os.O_RDWR | os.O_NONBLOCK)
@@ -246,6 +247,7 @@ def run():
             backup_file = local / "xmppserverconnector.lua.previous"
             assert backup_file.read_bytes() == lua_chunk(b"*")
             assert b"127.0.0.1\0" in xmpp_file.read_bytes() and xmpp_pending.exists()
+            assert xmpp_file.stat().st_mode & 0o777 == xmpp_mode
             backup_file.rename(local / "xmpp-backup.saved")
             assert request("integrations/xmpp", cookie=cookie)[0] == 503
             (local / "xmpp-backup.saved").rename(backup_file)
