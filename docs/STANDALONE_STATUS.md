@@ -2,6 +2,13 @@
 
 This file records acceptance evidence, not a release claim.
 
+## Listener binding policy (2026-10-20)
+
+The installer keeps the stock XMPP listener network-accessible, restoring its
+wildcard binding if an earlier installation restricted it to loopback. The
+stock HBus listener remains restricted to loopback. Reinstall to apply this
+change to a hub previously installed with the older XMPP restriction.
+
 ## MQTT And Home Assistant Rewrite (2026-10-05)
 
 Deployed to the verified Harmony Hub / 4.15.600 and the existing Home Assistant
