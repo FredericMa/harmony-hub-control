@@ -25,14 +25,17 @@ def lua_chunk(address: bytes) -> bytes:
     )
 
 
-hbus = lua_chunk(b"0.0.0.0")
-restricted_hbus = configure_transport(hbus, "hbushttpserverconnector.lua")
+stock_hbus = lua_chunk(b"0.0.0.0")
+restricted_hbus = configure_transport(stock_hbus, "hbushttpserverconnector.lua")
 assert b"127.0.0.1\0" in restricted_hbus
 assert configure_transport(restricted_hbus, "hbushttpserverconnector.lua") == restricted_hbus
 
-restricted_xmpp = lua_chunk(b"127.0.0.1")
+stock_xmpp = lua_chunk(b"*")
+assert configure_transport(stock_xmpp, "xmppserverconnector.lua") == stock_xmpp
+restricted_xmpp = configure_transport(stock_xmpp, "xmppserverconnector.lua", public_xmpp=False)
+assert b"127.0.0.1\0" in restricted_xmpp
 public_xmpp = configure_transport(restricted_xmpp, "xmppserverconnector.lua")
 assert b"*\0" in public_xmpp
 assert configure_transport(public_xmpp, "xmppserverconnector.lua") == public_xmpp
 
-print("HBus remains loopback-only; XMPP remains network-accessible")
+print("HBus remains loopback-only; XMPP supports public and loopback bindings")
